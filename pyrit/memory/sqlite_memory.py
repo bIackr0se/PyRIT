@@ -378,7 +378,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         """
         per_key_are_conditions = []
         for key, value in memory_labels.items():
-            are_col = func.json_extract(AttackResultEntry.labels, f"$.{key}")
+            are_col = func.json_extract(AttackResultEntry.labels, f'$."{key}"')
             per_key_are_conditions.append(are_col == str(value))
         return [
             exists().where(
@@ -626,7 +626,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
             if not values:
                 continue
-            are_col = func.json_extract(AttackResultEntry.labels, f"$.{key}")
+            are_col = func.json_extract(AttackResultEntry.labels, f'$."{key}"')
             per_key_are_conditions.append(are_col.in_(values))
 
         return and_(

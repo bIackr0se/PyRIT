@@ -1162,6 +1162,40 @@ async def test_get_attack_results_rejects_invalid_label_keys(sqlite_instance: Me
         (await sqlite_instance.get_attack_results_async(labels={bad_key: "value"}))
 
 
+@pytest.mark.parametrize("key", ["team.name", "run-id"])
+async def test_get_attack_results_by_labels_key_with_dot_or_hyphen(sqlite_instance: MemoryInterface, key: str):
+    """A label key the allowlist accepts is matched as one key, not as a nested JSON path."""
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            create_attack_result("conv_1", 1, labels={key: "safety"}),
+            create_attack_result("conv_2", 2, labels={"team": "safety"}),
+        ]
+    )
+
+    results = await sqlite_instance.get_attack_results_async(labels={key: "safety"})
+    assert [r.conversation_id for r in results] == ["conv_1"]
+
+    results = await sqlite_instance.get_attack_results_async(labels={key: ["other", "safety"]})
+    assert [r.conversation_id for r in results] == ["conv_1"]
+
+
+async def test_get_message_pieces_by_label_key_with_dot(sqlite_instance: MemoryInterface):
+    """Message pieces are found through a dotted label key on their attack result."""
+    for conversation_id in ("conv_1", "conv_2"):
+        await sqlite_instance.add_message_pieces_to_memory_async(
+            message_pieces=[MessagePiece(role="user", original_value="hello", conversation_id=conversation_id)]
+        )
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            create_attack_result("conv_1", 1, labels={"team.name": "safety"}),
+            create_attack_result("conv_2", 2, labels={"team": "safety"}),
+        ]
+    )
+
+    pieces = await sqlite_instance.get_message_pieces_async(labels={"team.name": "safety"})
+    assert [p.conversation_id for p in pieces] == ["conv_1"]
+
+
 async def test_get_attack_results_by_labels_multiple(sqlite_instance: MemoryInterface):
     """Test filtering attack results by multiple labels (AND logic)."""
 

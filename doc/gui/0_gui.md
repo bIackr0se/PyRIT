@@ -110,6 +110,16 @@ chat, not the current draft.
 
 Type a message and press Enter (or click Send) to send it to the chat target. The response appears below. Shift+Enter inserts a newline without sending.
 
+If the prompt box is disabled, hover over it or click it to see a list of reasons.
+Keyboard users can focus the box and press Enter to open the same list.
+Target processing errors show the complete stored error details. To continue after
+an error, use **Copy conversation** on the failed prompt and select **New conversation**
+or **New attack**. Both destinations copy the safe history before the failed prompt
+and restore that prompt as an unsent draft with its original attachments.
+Targets that cannot replay history start with an empty new attack.
+After a reload or runtime change, converter choices cannot be restored.
+A warning beside the recovered draft tells you to select and apply converters again before sending.
+
 When you open a saved chat, CoPyRIT automatically selects the target originally used, if its registered identity still matches. This also applies to direct links, reloads, and browser Back/Forward navigation. You can continue the same conversation without selecting the target again. Opening a saved chat does not change your defaults.
 
 #### Repeating a Message
@@ -588,9 +598,11 @@ at `GET /api/runtime`.
 ## Registry API Migration Notes
 
 Use `/api/converters/types` and `/api/targets/types` for registry build metadata.
-These endpoints return all constructor parameters from the registry, including
-lists, unions, and component references. The temporary `/catalog` routes retain
-their scalar-only filtering for the current UI.
+These endpoints return the constructor parameters external callers can set, each
+described in the form callers send it: a flat collection as a list, a union as its
+first alternative callers can send (`font_size: int | tuple[int, int]` as `int`),
+and a component reference as a name. They leave out types external callers can't
+create. Registry metadata keeps every parameter with its full annotation.
 Create requests should supply an explicit registry `name`. Converter creation
 returns the complete `ConverterInstance`; read its type from
 `identifier.class_name`, not the old top-level `converter_type` field. Treat
@@ -607,10 +619,8 @@ allowlisted image, audio, and video extensions inline. Other files, including PD
 SVG, HTML, text, and executables, download as `application/octet-stream` attachments.
 
 **Temporary compatibility, scheduled for removal with the chat migration:**
-the `/api/converters/catalog` and `/api/targets/catalog` routes project the same
-registry metadata for the current UI. Create requests without a name receive a
-generated `compat_...` name. New clients should not depend on these routes or
-unnamed creation.
+target create requests without a name receive a generated `compat_...` name.
+New clients should supply an explicit name.
 
 ## Connection Health
 

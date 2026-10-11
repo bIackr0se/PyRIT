@@ -10,6 +10,11 @@ from pyrit.models import ComponentIdentifier
 logger = logging.getLogger(__name__)
 
 
+def _is_variation_selector(char: str) -> bool:
+    code_point = ord(char)
+    return 0xFE00 <= code_point <= 0xFE0F or 0xE0100 <= code_point <= 0xE01EF
+
+
 class VariationSelectorSmugglerConverter(SmugglerConverter):
     """
     Encodes and decodes text using Unicode Variation Selectors.
@@ -54,8 +59,7 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
         base_char = base_char_utf8 if base_char_utf8 is not None else "😊"
         if len(base_char) != 1:
             raise ValueError("base_char_utf8 must be exactly one character.")
-        code_point = ord(base_char)
-        if 0xFE00 <= code_point <= 0xFE0F or 0xE0100 <= code_point <= 0xE01EF:
+        if _is_variation_selector(base_char):
             raise ValueError("base_char_utf8 must not be a variation selector.")
         self.utf8_base_char = base_char
         self.embed_in_base = embed_in_base
@@ -111,7 +115,11 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
     def decode_message(self, message: str) -> str:
         """
         Decode a message encoded using Unicode variation selectors.
-        The decoder scans the string for variation selectors, ignoring any visible separator.
+
+        The decoder reads the variation selectors that follow the base character, with or without the
+        space separator. Selectors elsewhere in the text, such as the U+FE0F in an emoji like ❤️, are not part
+        of the payload. If no base character carries a payload, the first run of variation selectors
+        in the string is decoded.
 
         Args:
             message (str): The encoded message.
@@ -119,6 +127,16 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
         Returns:
             str: The decoded message.
         """
+        start = message.find(self.utf8_base_char)
+        while start != -1:
+            payload_start = start + 1
+            if message[payload_start : payload_start + 1] == " ":
+                payload_start += 1
+            if payload_start < len(message) and _is_variation_selector(message[payload_start]):
+                message = message[payload_start:]
+                break
+            start = message.find(self.utf8_base_char, start + 1)
+
         bytes_out = bytearray()
         started = False
         for char in message:
@@ -169,8 +187,9 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
         """
         Extract the visible text and decodes the hidden text from a combined string.
 
-        It searches for the first occurrence of the base character (``self.utf8_base_char``) and treats everything
-        from that point on as the hidden payload.
+        ``encode_visible_hidden`` appends the base character and the hidden payload after the visible text, so the
+        last occurrence of the base character starts the hidden payload. The visible text may contain the base
+        character itself.
 
         Args:
             combined (str): The combined text containing visible and hidden parts.
@@ -178,8 +197,10 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
         Returns:
             tuple[str, str]: A tuple with the visible text and the decoded hidden text.
         """
-        base_char = self.utf8_base_char
-        index = combined.find(base_char)
+        index = combined.rfind(self.utf8_base_char)
+        if not self.embed_in_base and index > 0 and combined[index - 1] == self.utf8_base_char == " ":
+            # With a space as the base character, the last space found is the separator after it.
+            index -= 1
         if index == -1:
             return combined, ""
         visible = combined[:index]

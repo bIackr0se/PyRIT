@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import functools
 import logging
-import re
 import uuid
 from datetime import UTC, datetime
+from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Annotated, Any, TypeVar, cast
 
 from jinja2 import StrictUndefined, Undefined, meta
@@ -107,13 +107,8 @@ class _DeferRenderError(Exception):
     """Raised when an unresolved variable would decide a branch or a loop."""
 
 
-class _DeferringUndefined(PartialUndefined):
-    """
-    Placeholder for the load-time render of trusted templates.
-
-    It cannot decide a branch or a loop: answering at load would drop the {% if %} or {% for %} tags,
-    and the later render with the real parameters could not decide again.
-    """
+class _LoopDeferringUndefined(PartialUndefined):
+    """Preserve unresolved loops while keeping the existing partial-render branch behavior."""
 
     def __iter__(self) -> Iterator[object]:
         """
@@ -124,6 +119,15 @@ class _DeferringUndefined(PartialUndefined):
 
         """
         raise _DeferRenderError(self._undefined_name)
+
+
+class _DeferringUndefined(_LoopDeferringUndefined):
+    """
+    Placeholder for the load-time render of trusted templates.
+
+    It cannot decide a branch or a loop: answering at load would drop the {% if %} or {% for %} tags,
+    and the later render with the real parameters could not decide again.
+    """
 
     def __bool__(self) -> bool:
         """
@@ -173,6 +177,50 @@ def _deferring(function: _JinjaCallable) -> _JinjaCallable:
 
     # Same signature as the wrapped test or filter, so the environment's test and filter tables keep their types.
     return cast("_JinjaCallable", deferring)
+
+
+def _restore_path_binding(value: str, *, windows: bool = False) -> PurePath:
+    """
+    Restore lexical path operations without exposing filesystem access to a stored template.
+
+    Args:
+        value: The serialized path.
+        windows: Whether the original path uses Windows semantics.
+
+    Returns:
+        The filesystem-independent path with its original platform flavor.
+    """
+    return PureWindowsPath(value) if windows else PurePosixPath(value)
+
+
+def _serialize_template_binding(value: Any) -> str:
+    """
+    Serialize a supplied path or text value as a Jinja expression.
+
+    Args:
+        value: The supplied template value.
+
+    Returns:
+        The expression used to preserve the value in a deferred template.
+    """
+    if isinstance(value, PurePath):
+        return f"{str(value)!r} | pyrit_path(windows={isinstance(value, PureWindowsPath)!r})"
+    return repr(str(value))
+
+
+def _template_environment(undefined: type[Undefined]) -> SandboxedEnvironment:
+    """
+    Create the sandbox shared by load-time, partial, and final rendering.
+
+    Args:
+        undefined: The placeholder class for unresolved parameters.
+
+    Returns:
+        The sandbox with support for restoring serialized path bindings.
+    """
+    env = SandboxedEnvironment(undefined=undefined)
+    env.filters["pyrit_path"] = _restore_path_binding
+    return env
 
 
 class Seed(BaseModel):
@@ -257,7 +305,7 @@ class Seed(BaseModel):
         template_identifier = self.name or "<unnamed template>"
 
         try:
-            env = SandboxedEnvironment(undefined=StrictUndefined)
+            env = _template_environment(StrictUndefined)
             is_jinja_template = env.from_string(self.value)
             return is_jinja_template.render(**kwargs)
         except Exception as e:
@@ -281,26 +329,14 @@ class Seed(BaseModel):
             ValueError: If parameters are missing or invalid in the template.
 
         """
-        # Check if the template contains Jinja2 control structures (for loops, if statements, etc.)
-        # If it does, and we don't have all required parameters, don't render it to preserve the structure
-
-        has_control_structures = bool(re.search(r"\{%[-\s]*(for|if|block|macro|call)", self.value))
-
-        if has_control_structures:
-            # Check if all parameters in control structures are provided
-            # Extract variable names from {% for var in collection %} patterns
-            for_vars = re.findall(r"\{%[-\s]*for\s+\w+\s+in\s+(\w+)", self.value)
-            if any(var not in kwargs for var in for_vars):
-                # Don't render if we're missing loop collection variables - preserve the template as-is
-                return self.value
-
-        # Create a Jinja template with PartialUndefined placeholders
-        env = SandboxedEnvironment(undefined=PartialUndefined)
+        env = _template_environment(_LoopDeferringUndefined)
         is_jinja_template = env.from_string(self.value)
 
         try:
             # Render the template with the provided kwargs
             return is_jinja_template.render(**kwargs)
+        except _DeferRenderError:
+            return self.value
         except Exception as e:
             logger.error("Error rendering template: %s", e)
             return self.value
@@ -312,6 +348,8 @@ class Seed(BaseModel):
         Behaves like render_template_value_silent, except when a missing parameter would decide a branch,
         a loop, a comparison, a Jinja test or the `default` filter. Then the template is kept as-is, with a
         `{% set %}` in front for each supplied parameter it uses, so later renders and stored copies keep them.
+        Path bindings preserve lexical operations and their original platform flavor, without providing
+        filesystem access to a reconstructed template.
 
         Args:
             kwargs: Key-value pairs to replace in the SeedPrompt value.
@@ -320,7 +358,7 @@ class Seed(BaseModel):
             The rendered value, or the unchanged value when rendering is deferred.
 
         """
-        env = SandboxedEnvironment(undefined=_DeferringUndefined)
+        env = _template_environment(_DeferringUndefined)
         env.tests = {name: _deferring(test) for name, test in env.tests.items()}
         env.filters["default"] = env.filters["d"] = _deferring(env.filters["default"])
 
@@ -328,7 +366,10 @@ class Seed(BaseModel):
             return env.from_string(self.value).render(**kwargs)
         except _DeferRenderError:
             used = meta.find_undeclared_variables(env.parse(self.value))
-            bindings = "".join(f"{{% set {name} = {str(kwargs[name])!r} %}}" for name in sorted(used & kwargs.keys()))
+            bindings = "".join(
+                f"{{% set {name} = {_serialize_template_binding(kwargs[name])} %}}"
+                for name in sorted(used & kwargs.keys())
+            )
             return bindings + self.value
         except Exception as e:
             logger.error("Error rendering template: %s", e)

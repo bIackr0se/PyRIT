@@ -15,7 +15,7 @@ from jinja2.sandbox import SandboxedEnvironment
 from PIL import Image
 from scipy.io import wavfile
 
-from pyrit.common.path import DATASETS_PATH
+from pyrit.common.path import DATASETS_PATH, PATHS_DICT
 from pyrit.memory.storage.serializers import set_seed_sha256_async
 from pyrit.models import (
     AttackSeedGroup,
@@ -253,6 +253,93 @@ def test_seed_prompt_keeps_path_resolved_at_load_when_its_condition_is_deferred(
     for seed in (template, reloaded):
         rendered = seed.render_template_value(conversation_context=conversation_context)
         assert rendered == f"Path: {DATASETS_PATH}. {expected_tail}"
+
+
+@pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
+@pytest.mark.parametrize("conversation_context", [None, "rainbows"])
+@pytest.mark.parametrize(
+    "path_expression",
+    [
+        "{{ datasets_path }}",
+        "{{ datasets_path.name }}",
+        "{{ datasets_path.as_posix() }}",
+        "{% for part in datasets_path.parts %}[{{ part }}]{% endfor %}",
+        "{{ datasets_path is string }}",
+    ],
+)
+def test_deferred_template_keeps_path_operations_after_reconstruction(
+    seed_class, conversation_context, path_expression
+):
+    source = f"{path_expression}. {{% if conversation_context %}}{{{{ conversation_context }}}}{{% endif %}}"
+    expected = (
+        SandboxedEnvironment(undefined=StrictUndefined)
+        .from_string(source)
+        .render(**PATHS_DICT, conversation_context=conversation_context)
+    )
+    template = seed_class(value=source, data_type="text", is_jinja_template=True)
+    reloaded = seed_class(value=template.value, data_type="text")
+    revalidated = seed_class.model_validate(template.model_dump())
+
+    assert revalidated.value == template.value
+    for seed in (template, reloaded, revalidated):
+        assert seed.render_template_value(conversation_context=conversation_context) == expected
+        assert seed.render_template_value_silent(conversation_context=conversation_context) == expected
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pathlib.PureWindowsPath(r"C:\data\quoted 'folder'\templates"),
+        pathlib.PurePosixPath("/data/quoted 'folder'/templates"),
+    ],
+)
+@pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
+def test_deferred_path_binding_keeps_flavor_and_escaping(seed_class, path):
+    source = (
+        "{{ datasets_path.as_posix() }} {{ datasets_path.parent.name }} "
+        "{% if conversation_context %}{{ conversation_context }}{% endif %}"
+    )
+    expected = (
+        SandboxedEnvironment(undefined=StrictUndefined)
+        .from_string(source)
+        .render(datasets_path=path, conversation_context="rainbows")
+    )
+    with (
+        patch("pyrit.models.seeds.seed_prompt.PATHS_DICT", {"datasets_path": path}),
+        patch("pyrit.models.seeds.seed_objective.PATHS_DICT", {"datasets_path": path}),
+    ):
+        template = seed_class(value=source, data_type="text", is_jinja_template=True)
+
+    reloaded = seed_class(value=template.value, data_type="text")
+    assert reloaded.render_template_value(conversation_context="rainbows") == expected
+
+
+@pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
+def test_deferred_path_binding_does_not_expose_file_access(seed_class):
+    template = seed_class(
+        value="{% if flag %}{{ datasets_path.read_text() }}{% endif %}",
+        data_type="text",
+        is_jinja_template=True,
+    )
+    reloaded = seed_class(value=template.value, data_type="text")
+
+    with pytest.raises(ValueError, match="has no attribute 'read_text'"):
+        reloaded.render_template_value(flag=True)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "{% for item in items %}{{ item }}{% endfor %}",
+        "{% for key, value in items %}{{ key }}{{ value }}{% endfor %}",
+        "{% set rows = items %}{% for row in rows %}{{ row }}{% endfor %}",
+        "{% macro show(rows) %}{% for row in rows %}{{ row }}{% endfor %}{% endmacro %}{{ show(items) }}",
+    ],
+)
+def test_partial_render_preserves_unresolved_loop_collection(source):
+    template = SeedPrompt(value=source, data_type="text", is_jinja_template=True)
+
+    assert template.render_template_value_silent() == source
 
 
 def test_render_template_value_silent_decides_conditions_as_before():

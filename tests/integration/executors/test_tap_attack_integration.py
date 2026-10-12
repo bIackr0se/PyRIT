@@ -8,15 +8,16 @@ from pyrit.executor.attack import (
     TAPAttack,
     TAPSystemPromptPaths,
 )
-from pyrit.memory import MemoryInterface
+from pyrit.memory import SQLiteMemory
 from pyrit.models import ConversationType, Message, SeedPrompt
 from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIImageTarget
 
 
 @pytest.mark.run_only_if_all_tests
+@pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("with_context", [False, True])
-async def test_tap_attack_text_target_async(*, patch_central_database: MemoryInterface, with_context: bool) -> None:
+async def test_tap_attack_text_target_async(*, sqlite_instance: SQLiteMemory, with_context: bool) -> None:
     """Test TAP attack against a text generation target."""
     adversarial_chat = OpenAIChatTarget(temperature=1.1)
     objective_target = OpenAIChatTarget()
@@ -46,9 +47,7 @@ async def test_tap_attack_text_target_async(*, patch_central_database: MemoryInt
     references = result.get_conversations_by_type(ConversationType.ADVERSARIAL)
     assert references
     for reference in references:
-        messages = await patch_central_database.get_conversation_messages_async(
-            conversation_id=reference.conversation_id
-        )
+        messages = await sqlite_instance.get_conversation_messages_async(conversation_id=reference.conversation_id)
         system_prompts = [message.get_value() for message in messages if message.api_role == "system"]
         assert system_prompts
         assert all(("PRIOR CONVERSATION CONTEXT" in prompt.upper()) == with_context for prompt in system_prompts)

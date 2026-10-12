@@ -219,6 +219,7 @@ def test_render_template_value_silent_blocks_ssti_via_endraw_injection():
         ("{% if flag is defined %}A{% else %}B{% endif %}", {}, "B"),
         ("{{ flag | default('B') }}", {}, "B"),
         ("{% if flag == 'a' %}A{% else %}B{% endif %}", {"flag": "b"}, "B"),
+        ("{% if flag != 'a' %}A{% else %}B{% endif %}", {"flag": "b"}, "A"),
         ("{% if flag is filter %}A{% else %}B{% endif %}", {"flag": "upper"}, "A"),
         ("{% if flag is test %}A{% else %}B{% endif %}", {"flag": "nope"}, "B"),
         ("{% for item in ['A', 'B'] if flag %}{{ item }}{% endfor %}", {"flag": False}, ""),
@@ -268,8 +269,11 @@ def test_seed_prompt_keeps_path_resolved_at_load_when_its_condition_is_deferred(
     ],
 )
 def test_deferred_template_keeps_path_operations_after_reconstruction(
-    seed_class, conversation_context, path_expression
-):
+    *,
+    seed_class: type[SeedPrompt | SeedObjective],
+    conversation_context: str | None,
+    path_expression: str,
+) -> None:
     source = f"{path_expression}. {{% if conversation_context %}}{{{{ conversation_context }}}}{{% endif %}}"
     expected = (
         SandboxedEnvironment(undefined=StrictUndefined)
@@ -294,7 +298,9 @@ def test_deferred_template_keeps_path_operations_after_reconstruction(
     ],
 )
 @pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
-def test_deferred_path_binding_keeps_flavor_and_escaping(seed_class, path):
+def test_deferred_path_binding_keeps_flavor_and_escaping(
+    *, seed_class: type[SeedPrompt | SeedObjective], path: pathlib.PurePath
+) -> None:
     source = (
         "{{ datasets_path.as_posix() }} {{ datasets_path.parent.name }} "
         "{% if conversation_context %}{{ conversation_context }}{% endif %}"
@@ -315,7 +321,7 @@ def test_deferred_path_binding_keeps_flavor_and_escaping(seed_class, path):
 
 
 @pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
-def test_deferred_path_binding_does_not_expose_file_access(seed_class):
+def test_deferred_path_binding_does_not_expose_file_access(seed_class: type[SeedPrompt | SeedObjective]) -> None:
     template = seed_class(
         value="{% if flag %}{{ datasets_path.read_text() }}{% endif %}",
         data_type="text",
@@ -327,6 +333,23 @@ def test_deferred_path_binding_does_not_expose_file_access(seed_class):
         reloaded.render_template_value(flag=True)
 
 
+@pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
+def test_deferred_template_keeps_supplied_text_binding(seed_class: type[SeedPrompt | SeedObjective]) -> None:
+    style = "brief 'quoted' \\ style"
+    with (
+        patch("pyrit.models.seeds.seed_prompt.PATHS_DICT", {"style": style}),
+        patch("pyrit.models.seeds.seed_objective.PATHS_DICT", {"style": style}),
+    ):
+        template = seed_class(
+            value="{{ style.upper() }} {% if flag %}{{ prompt }}{% endif %}",
+            data_type="text",
+            is_jinja_template=True,
+        )
+
+    reloaded = seed_class(value=template.value, data_type="text")
+    assert reloaded.render_template_value(flag=True, prompt="rainbows") == f"{style.upper()} rainbows"
+
+
 @pytest.mark.parametrize(
     "source",
     [
@@ -336,7 +359,7 @@ def test_deferred_path_binding_does_not_expose_file_access(seed_class):
         "{% macro show(rows) %}{% for row in rows %}{{ row }}{% endfor %}{% endmacro %}{{ show(items) }}",
     ],
 )
-def test_partial_render_preserves_unresolved_loop_collection(source):
+def test_partial_render_preserves_unresolved_loop_collection(source: str) -> None:
     template = SeedPrompt(value=source, data_type="text", is_jinja_template=True)
 
     assert template.render_template_value_silent() == source

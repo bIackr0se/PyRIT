@@ -118,8 +118,9 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
 
         The decoder reads the variation selectors that follow the base character, with or without the
         space separator. Selectors elsewhere in the text, such as the U+FE0F in an emoji like ❤️, are not part
-        of the payload. If no base character carries a payload, the first run of variation selectors
-        in the string is decoded.
+        of the payload, and neither is a lone U+FE0E or U+FE0F after the base character, which is how text
+        selects an emoji's presentation. If no base character carries a payload, the first run of variation
+        selectors in the string is decoded.
 
         Args:
             message (str): The encoded message.
@@ -132,7 +133,11 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
             payload_start = start + 1
             if message[payload_start : payload_start + 1] == " ":
                 payload_start += 1
-            if payload_start < len(message) and _is_variation_selector(message[payload_start]):
+            payload_end = payload_start
+            while payload_end < len(message) and _is_variation_selector(message[payload_end]):
+                payload_end += 1
+            payload = message[payload_start:payload_end]
+            if payload and payload not in ("\ufe0e", "\ufe0f"):
                 message = message[payload_start:]
                 break
             start = message.find(self.utf8_base_char, start + 1)

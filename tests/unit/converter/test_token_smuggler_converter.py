@@ -219,6 +219,28 @@ async def test_decode_variation_selector_smuggler_reads_payload_on_other_base_ch
     assert decoded_result.output_text == "secret"
 
 
+@pytest.mark.parametrize("embed_in_base", [True, False])
+async def test_decode_variation_selector_smuggler_ignores_presentation_selector_on_base_char(embed_in_base):
+    encoder = VariationSelectorSmugglerConverter(base_char_utf8="A", embed_in_base=embed_in_base)
+    _, encoded = encoder.encode_message("secret")
+
+    decoder = VariationSelectorSmugglerConverter(action="decode", base_char_utf8="\u2764", embed_in_base=embed_in_base)
+    decoded_result = await decoder.convert_async(prompt=encoded + " thanks \u2764\ufe0f", input_type="text")
+
+    assert decoded_result.output_text == "secret"
+
+
+@pytest.mark.parametrize("base_char", ["\U0001f60a", "\u2764"])
+@pytest.mark.parametrize("embed_in_base", [True, False])
+@pytest.mark.parametrize("hidden", ["\x0e", "\x0f"])
+async def test_encode_decode_variation_selector_smuggler_presentation_selector_bytes(base_char, embed_in_base, hidden):
+    converter = VariationSelectorSmugglerConverter(base_char_utf8=base_char, embed_in_base=embed_in_base)
+
+    _, encoded = converter.encode_message(hidden)
+
+    assert converter.decode_message("Hi " + encoded) == hidden
+
+
 @pytest.mark.parametrize("encode_embed, decode_embed", [(True, False), (False, True)])
 async def test_decode_variation_selector_smuggler_across_separator_settings(encode_embed, decode_embed):
     encoder = VariationSelectorSmugglerConverter(embed_in_base=encode_embed)

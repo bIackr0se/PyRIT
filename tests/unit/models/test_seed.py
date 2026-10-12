@@ -264,6 +264,9 @@ def test_seed_prompt_keeps_path_resolved_at_load_when_its_condition_is_deferred(
         "{{ datasets_path }}",
         "{{ datasets_path.name }}",
         "{{ datasets_path.as_posix() }}",
+        "{{ datasets_path.exists() }}",
+        "{{ datasets_path.is_dir() }}",
+        "{{ datasets_path.resolve().name }}",
         "{% for part in datasets_path.parts %}[{{ part }}]{% endfor %}",
         "{{ datasets_path is string }}",
     ],
@@ -321,16 +324,115 @@ def test_deferred_path_binding_keeps_flavor_and_escaping(
 
 
 @pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
-def test_deferred_path_binding_does_not_expose_file_access(seed_class: type[SeedPrompt | SeedObjective]) -> None:
+def test_untrusted_template_path_filter_does_not_expose_file_access(
+    seed_class: type[SeedPrompt | SeedObjective],
+) -> None:
     template = seed_class(
-        value="{% if flag %}{{ datasets_path.read_text() }}{% endif %}",
+        value="{{ ('sample' | pyrit_path).read_text() }}",
         data_type="text",
-        is_jinja_template=True,
     )
-    reloaded = seed_class(value=template.value, data_type="text")
 
     with pytest.raises(ValueError, match="has no attribute 'read_text'"):
-        reloaded.render_template_value(flag=True)
+        template.render_template_value()
+
+
+@pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "{% if datasets_path.exists() and flag %}{{ prompt }}{% endif %}",
+        "{% if datasets_path . exists () and flag %}{{ prompt }}{% endif %}",
+        "{{ datasets_path.exists() }} {{ prompt }}{% if flag %}yes{% endif %}",
+        "{% set local = datasets_path %}{{ local.exists() }} {% if flag %}{{ prompt }}{% endif %}",
+        "{% set local = datasets_path.parent %}{{ local.is_dir() }} {% if flag %}{{ prompt }}{% endif %}",
+        "{{ datasets_path.name ~ prompt }}{% if flag %}yes{% endif %}",
+        "{%- if flag -%}{{ datasets_path.exists() }} {{ prompt }}{%- endif -%}",
+        "{% raw %}{{ datasets_path.exists() }}{% endraw %}{{ datasets_path.exists() }}{% if flag %}yes{% endif %}",
+    ],
+)
+def test_deferred_template_preserves_bound_path_operations_in_expressions(
+    *, seed_class: type[SeedPrompt | SeedObjective], source: str
+) -> None:
+    expected = (
+        SandboxedEnvironment(undefined=StrictUndefined)
+        .from_string(source)
+        .render(**PATHS_DICT, flag=True, prompt="rainbows")
+    )
+    template = seed_class(value=source, data_type="text", is_jinja_template=True)
+    reloaded = seed_class(value=template.value, data_type="text")
+
+    assert reloaded.render_template_value(flag=True, prompt="rainbows") == expected
+
+
+@pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
+def test_deferred_template_keeps_fully_bound_directory_loop(
+    *, seed_class: type[SeedPrompt | SeedObjective], tmp_path: pathlib.Path
+) -> None:
+    (tmp_path / "sample.txt").write_text("rainbows", encoding="utf-8")
+    source = (
+        "{% for entry in datasets_path.iterdir() %}{{ entry.name }}:{{ entry.exists() }}{% endfor %}"
+        "{% if flag %}{{ prompt }}{% endif %}"
+    )
+    expected = (
+        SandboxedEnvironment(undefined=StrictUndefined)
+        .from_string(source)
+        .render(datasets_path=tmp_path, flag=True, prompt="rainbows")
+    )
+    with (
+        patch("pyrit.models.seeds.seed_prompt.PATHS_DICT", {"datasets_path": tmp_path}),
+        patch("pyrit.models.seeds.seed_objective.PATHS_DICT", {"datasets_path": tmp_path}),
+    ):
+        template = seed_class(value=source, data_type="text", is_jinja_template=True)
+    reloaded = seed_class(value=template.value, data_type="text")
+
+    assert reloaded.render_template_value(flag=True, prompt="rainbows") == expected
+
+
+@pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
+def test_deferred_template_keeps_file_read_result_at_load(
+    *, seed_class: type[SeedPrompt | SeedObjective], tmp_path: pathlib.Path
+) -> None:
+    source_file = tmp_path / "sample.txt"
+    source_file.write_text("rainbows 'quoted' \\ text", encoding="utf-8")
+    with (
+        patch("pyrit.models.seeds.seed_prompt.PATHS_DICT", {"datasets_path": source_file}),
+        patch("pyrit.models.seeds.seed_objective.PATHS_DICT", {"datasets_path": source_file}),
+    ):
+        template = seed_class(
+            value="{% if flag %}{{ datasets_path.read_text(encoding='utf-8') }}{% endif %}",
+            data_type="text",
+            is_jinja_template=True,
+        )
+    source_file.unlink()
+    reloaded = seed_class(value=template.value, data_type="text")
+
+    assert reloaded.render_template_value(flag=True) == "rainbows 'quoted' \\ text"
+
+
+@pytest.mark.parametrize("bound", [None, False, 0, (), ("rainbows",), ["rainbows"], {"label": "rainbows"}])
+@pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
+def test_deferred_template_preserves_typed_supplied_values(
+    *, seed_class: type[SeedPrompt | SeedObjective], bound: object
+) -> None:
+    with (
+        patch("pyrit.models.seeds.seed_prompt.PATHS_DICT", {"bound": bound}),
+        patch("pyrit.models.seeds.seed_objective.PATHS_DICT", {"bound": bound}),
+    ):
+        template = seed_class(
+            value="{% if flag %}{{ bound == expected }}{% endif %}",
+            data_type="text",
+            is_jinja_template=True,
+        )
+    reloaded = seed_class(value=template.value, data_type="text")
+
+    assert reloaded.render_template_value(flag=True, expected=bound) == "True"
+
+
+def test_deferred_template_without_bound_paths_keeps_control_syntax_verbatim() -> None:
+    source = "Before\n{%- for item in items -%}\n{{ item }}\n{%- endfor -%}\n{% if flag %}yes{% endif %}"
+    template = SeedPrompt(value=source, data_type="text", is_jinja_template=True)
+
+    assert template.value == source
 
 
 @pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])

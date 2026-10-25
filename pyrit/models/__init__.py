@@ -62,8 +62,11 @@ if TYPE_CHECKING:
         ScenarioRunSizeEstimateRequest,
         ScenarioRunSizeEstimateStatus,
         ScenarioRunSizeFactor,
+        ScenarioSuite,
+        ScenarioSuiteEntry,
         ScenarioTechniqueSummary,
         StoredPreset,
+        StoredScenarioSuite,
     )
     from pyrit.models.conversation_stats import ConversationStats
     from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
@@ -128,7 +131,7 @@ if TYPE_CHECKING:
     )
     from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
     from pyrit.models.messages.conversation_retry import ConversationRetry, ConversationRetryReason
-    from pyrit.models.operation import Operation, OperationCreate
+    from pyrit.models.operation import Operation, OperationCreate, OperationUsage
     from pyrit.models.parameter import (
         ComponentType,
         Parameter,
@@ -209,6 +212,11 @@ if TYPE_CHECKING:
         Observation,
         ObservationPayload,
         OutputMatches,
+        ProgramBehaves,
+        ProgramCase,
+        ProgramExecutionObservationPayload,
+        ProgramExecutionScorable,
+        ProgramResult,
         Regex,
         Scorable,
         ScorableUnion,
@@ -286,6 +294,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Regex": "pyrit.models.score",
     "TextMatcher": "pyrit.models.score",
     "OutputMatches": "pyrit.models.score",
+    "ProgramBehaves": "pyrit.models.score",
+    "ProgramCase": "pyrit.models.score",
+    "ProgramExecutionObservationPayload": "pyrit.models.score",
+    "ProgramExecutionScorable": "pyrit.models.score",
+    "ProgramResult": "pyrit.models.score",
     "ConversationScorable": "pyrit.models.score",
     "ConversationObservationPayload": "pyrit.models.score",
     "AllAvailableDatasetSize": "pyrit.models.scenario_dataset_size_estimate",
@@ -406,6 +419,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ObjectiveTargetEvaluationIdentifier": "pyrit.models.identifiers",
     "Operation": "pyrit.models.operation",
     "OperationCreate": "pyrit.models.operation",
+    "OperationUsage": "pyrit.models.operation",
     "Parameter": "pyrit.models.parameter",
     "ParameterDestination": "pyrit.models.parameter",
     "PresetEntry": "pyrit.models.catalog",
@@ -448,6 +462,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioDatasetSummary": "pyrit.models.catalog",
     "ScenarioDefaultRunSizeEstimate": "pyrit.models.catalog",
     "ScenarioPreset": "pyrit.models.catalog",
+    "ScenarioSuite": "pyrit.models.catalog",
+    "ScenarioSuiteEntry": "pyrit.models.catalog",
     "ScenarioProducerCategoryCounts": "pyrit.models.catalog",
     "ScenarioProducerCounts": "pyrit.models.catalog",
     "ScenarioRunListItem": "pyrit.models.catalog",
@@ -511,6 +527,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "snake_case_to_class_name": "pyrit.models.identifiers",
     "sort_message_pieces": "pyrit.models.messages.message_piece",
     "StoredPreset": "pyrit.models.catalog",
+    "StoredScenarioSuite": "pyrit.models.catalog",
     "StrategyResult": "pyrit.models.results.strategy_result",
     "StrategyResultT": "pyrit.models.results.strategy_result",
     "StructuredParameterValue": "pyrit.models.parameter",

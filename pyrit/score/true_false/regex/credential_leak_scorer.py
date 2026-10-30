@@ -32,9 +32,9 @@ class CredentialLeakScorer(_ConfigurableRegexScorerMixin, RegexScorer):
     """
     Detect credential-shaped values while excluding configured test fixtures.
 
-    The default patterns cover common credential formats. Pass ``GARAK_PATTERNS``
-    through ``patterns`` to opt into the expanded Garak service coverage and
-    credential capture groups used for exclusions. The default patterns are unchanged.
+    The default patterns cover common credential formats, including legacy Slack
+    bot tokens. Pass ``GARAK_PATTERNS`` through ``patterns`` to opt into the expanded
+    Garak service coverage and credential capture groups used for exclusions.
     Azure SAS tokens are matched in full, regardless of query parameter order.
     """
 
